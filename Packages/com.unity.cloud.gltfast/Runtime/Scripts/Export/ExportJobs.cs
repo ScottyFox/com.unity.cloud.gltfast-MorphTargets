@@ -321,5 +321,23 @@ namespace GLTFast.Export
                 UnsafeUtility.MemCpy(outPtr, inPtr, byteLength);
             }
         }
+        //Custom MorphTargets
+        //References ->
+        //https://github.com/KhronosGroup/UnityGLTF/blob/b99d85f0b6d5a20ebc2d5a78158f92f938e8438a/Runtime/Plugins/GLTFSerialization/Schema/SchemaExtensions.cs#L19
+        [Unity.Burst.BurstCompile]
+        public unsafe struct ConvertVector3Job : IJobParallelFor
+        {
+            public NativeArray<float3> vectors;
+            //Coordinate Space Conversion Scale
+            public void Execute(int i)
+            {
+                var tmp = vectors[i];
+                tmp.x *= -1;
+                //tmp.y *=  1;
+                //tmp.z *=  1;
+                vectors[i] = tmp;
+            }
+        }
+        //
     }
 }

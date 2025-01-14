@@ -253,6 +253,9 @@ namespace GLTFast.Export
             tempMaterials.Clear();
             Mesh mesh = null;
             Transform[] bones = null;
+            //Custom MorphTargets
+            float[] weights = null;
+            //
             if (gameObject.TryGetComponent(out MeshFilter meshFilter))
             {
                 if (gameObject.TryGetComponent(out Renderer renderer))
@@ -272,6 +275,16 @@ namespace GLTFast.Export
                     mesh = smr.sharedMesh;
                     bones = smr.bones;
                     smr.GetSharedMaterials(tempMaterials);
+                    //Custom MorphTargets
+                    //References ->
+                    //https://github.com/KhronosGroup/UnityGLTF/blob/b99d85f0b6d5a20ebc2d5a78158f92f938e8438a/Runtime/Scripts/SceneExporter/ExporterMeshes.cs#L417
+                    weights = new float[mesh.blendShapeCount]; 
+                    for (int blendShapeIndex = 0; blendShapeIndex < mesh.blendShapeCount; blendShapeIndex++)
+                    {
+                        var frameWeight = mesh.GetBlendShapeFrameWeight(blendShapeIndex, 0);
+                        weights[blendShapeIndex] = smr.GetBlendShapeWeight(blendShapeIndex) / frameWeight;
+                    }
+                    //
                 }
             }
 
@@ -308,7 +321,11 @@ namespace GLTFast.Export
                         }
                     }
                 }
-                m_Writer.AddMeshToNode((int)nodeId, mesh, materialIds, joints);
+                m_Writer.AddMeshToNode((int)nodeId, mesh, materialIds, joints,
+                    //Custom MorphTargets
+                    weights
+                    //
+                    );
             }
 
             if (gameObject.TryGetComponent(out Camera camera))

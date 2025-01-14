@@ -175,7 +175,9 @@ namespace GLTFast.Schema
                 writer.AddArray("targets");
                 foreach (var target in targets)
                 {
+                    writer.AddObject();
                     target.GltfSerialize(writer);
+                    writer.Close();
                 }
                 writer.CloseArray();
             }

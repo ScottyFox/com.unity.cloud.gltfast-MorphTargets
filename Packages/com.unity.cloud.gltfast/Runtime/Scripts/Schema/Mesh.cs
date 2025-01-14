@@ -92,6 +92,7 @@ namespace GLTFast.Schema
             if (Extras != null)
             {
                 writer.AddProperty("extras");
+                writer.AddObject();
                 Extras.GltfSerialize(writer);
                 writer.Close();
             }

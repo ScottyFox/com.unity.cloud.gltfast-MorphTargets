@@ -114,6 +114,9 @@ namespace GLTFast.Export
         List<VertexAttributeUsage> m_MeshVertexAttributeUsage;
         Dictionary<int, int[]> m_NodeMaterials;
 
+        //Custom MorphTargets
+        Dictionary<int, float[]> m_NodeWeights;
+        //
         Stream m_BufferStream;
         string m_BufferPath;
 
@@ -177,6 +180,19 @@ namespace GLTFast.Export
             uint[] joints
             )
         {
+            AddMeshToNode(nodeId, uMesh, materialIds, joints, null);
+        }
+        /// <inheritdoc />
+        public void AddMeshToNode(
+            int nodeId,
+            UnityEngine.Mesh uMesh,
+            int[] materialIds,
+            uint[] joints,
+            //Custom MorphTargets
+            float[] weights
+            //
+            )
+        {
             if ((m_Settings.ComponentMask & ComponentType.Mesh) == 0) return;
             CertifyNotDisposed();
             var node = m_Nodes[nodeId];
@@ -229,6 +245,13 @@ namespace GLTFast.Export
             {
                 node.skin = AddSkin(node.mesh, joints);
             }
+            //Custom MorphTargets
+            if (weights != null)
+            {
+                m_NodeWeights ??= new Dictionary<int, float[]>();
+                m_NodeWeights[nodeId] = weights;
+            }
+            //
         }
 
         /// <inheritdoc />
@@ -718,6 +741,9 @@ namespace GLTFast.Export
                 if (!success) return false;
             }
 
+            //Custom MorphTargets
+            AssignBlendShapeWeightsToMeshes();
+            //
             AssignBindPosesToSkins();
             AssignMaterialsToMeshes();
 
@@ -801,6 +827,21 @@ namespace GLTFast.Export
                 }
             }
         }
+        //Custom MorphTargets
+        void AssignBlendShapeWeightsToMeshes()
+        {
+            if (m_NodeWeights == null)
+                return;
+            foreach (var pair in m_NodeWeights)
+            {
+                if (pair.Value == null)
+                    continue;
+                var meshId = m_Nodes[pair.Key].mesh;
+                m_Meshes[meshId].weights = pair.Value;
+            }
+            m_NodeWeights = null;
+        }
+        //
 
         void AssignBindPosesToSkins()
         {
@@ -1163,6 +1204,17 @@ namespace GLTFast.Export
                 streamCount = stream + 1;
             }
 
+            //Custom MorphTargets
+            if (uMesh.blendShapeCount > 0)
+            {
+                var targetNames = new string[uMesh.blendShapeCount];
+                for (int mn = 0; mn < uMesh.blendShapeCount; mn++)
+                {
+                    targetNames[mn] = uMesh.GetBlendShapeName(mn);
+                }
+                mesh.extras = new MeshExtras { targetNames = targetNames };
+            }
+            //
             var indexComponentType = uMesh.indexFormat == IndexFormat.UInt16 ? GltfComponentType.UnsignedShort : GltfComponentType.UnsignedInt;
             mesh.primitives = new MeshPrimitive[meshData.subMeshCount];
             var indexAccessors = new Accessor[meshData.subMeshCount];
@@ -1209,11 +1261,35 @@ namespace GLTFast.Export
 
                 indexOffset += indexAccessor.count * Accessor.GetComponentTypeSize(indexComponentType);
 
+                //Custom MorphTargets
+                MorphTarget[] morphTargets = (uMesh.blendShapeCount > 0) ? new MorphTarget[uMesh.blendShapeCount] : null;
+                for (int b = 0; b < uMesh.blendShapeCount; b++)
+                {
+                    var morphtarget = new MorphTarget();
+
+                    var name = uMesh.GetBlendShapeName(b);
+
+                    var vertices = new Vector3[uMesh.vertexCount];
+                    var normals = new Vector3[uMesh.vertexCount];
+                    var tangents = new Vector3[uMesh.vertexCount];
+
+                    uMesh.GetBlendShapeFrameVertices(b, 0, vertices, normals, tangents);
+
+                    morphtarget.POSITION = await AddUnityVector3ArrayAccessor(vertices);
+                    morphtarget.NORMAL = await AddUnityVector3ArrayAccessor(normals);
+                    morphtarget.TANGENT = await AddUnityVector3ArrayAccessor(tangents);
+
+                    morphTargets[b] = morphtarget;
+                }
+                //
                 mesh.primitives[subMeshIndex] = new MeshPrimitive
                 {
                     mode = mode.Value,
                     attributes = attributes,
                     indices = indexAccessorId,
+                    //Custom MorphTargets
+                    targets = morphTargets
+                    //
                 };
             }
             Profiler.EndSample(); // "BakeMesh 1"
@@ -1492,6 +1568,44 @@ namespace GLTFast.Export
             return bufferViewId;
         }
 
+        //Custom MorphTargets
+        async Task<int> AddUnityVector3ArrayAccessor(Vector3[] vertices)
+        {
+            var Accessor = new Accessor
+            {
+                byteOffset = 0,
+                componentType = GltfComponentType.Float,
+                count = vertices.Length,
+            };
+            Accessor.SetAttributeType(GltfAccessorAttributeType.VEC3);
+            var AccessorId = AddAccessor(Accessor);
+            var BufferView = await WriteUnityVector3ToBuffer(vertices);
+            Accessor.bufferView = BufferView;
+            return AccessorId;
+        }
+        async Task<int> WriteUnityVector3ToBuffer(Vector3[] deltas)
+        {
+            var bufferViewId = -1;
+            var nativeDeltas = new ManagedNativeArray<Vector3, float3>(deltas);
+            var floatArray = nativeDeltas.nativeArray;
+            var job = new ExportJobs.ConvertVector3Job
+            {
+                vectors = floatArray
+            }.Schedule(deltas.Length, k_DefaultInnerLoopBatchCount);
+
+            while (!job.IsCompleted)
+            {
+                await Task.Yield();
+            }
+            job.Complete();
+            bufferViewId = WriteBufferViewToBuffer(
+                floatArray.Reinterpret<byte>(sizeof(float) * 3), BufferViewTarget.None
+            );
+
+            nativeDeltas.Dispose();
+            return bufferViewId;
+        }
+        //
 #if DRACO_UNITY
         async Task BakeMeshDraco(int meshId)
         {
